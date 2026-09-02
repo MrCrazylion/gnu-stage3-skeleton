@@ -13,17 +13,18 @@ rel_type: default
 profile: default/linux/amd64/23.0/systemd
 version_stamp: skeleton
 
-# Portage tree snapshot to build against (materialised by `catalyst -s stable`).
-# Some Catalyst versions want a git commit hash here instead of a branch name.
-snapshot_treeish: stable
+# Catalyst 4 builds the snapshot from the git repo at repo_basedir/repo_name
+# (/var/db/repos/gentoo). The workflow clones it and runs `catalyst -s master`,
+# so this treeish must match that ref.
+snapshot_treeish: master
 
 # Seed dropped by the workflow at builds/default/stage3-amd64-systemd-latest.tar.xz
 source_subpath: default/stage3-amd64-systemd-latest
 
-# Local toolchain overlay from scripts/prepare-overlay.sh.
-# NOTE: this key is `portdir_overlay` on Catalyst <=3; on Catalyst 4 rename it
-# to `repos`. The overlay uses thin manifests so no manifest signing is needed.
-portdir_overlay: /tmp/gnu-overlay
+# Local toolchain overlay from scripts/prepare-overlay.sh. Catalyst 4 key for
+# extra ebuild repositories (replaces the old portdir_overlay/portage_overlay).
+# The overlay uses thin manifests so no manifest signing is needed.
+repos: /tmp/gnu-overlay
 
 # Force vanilla, unbranded builds for everything compiled in this stage.
 stage4/use: vanilla -branding

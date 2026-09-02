@@ -5,9 +5,11 @@
 # a local toolchain overlay that reverts gcc/binutils/glibc to upstream GNU
 # identity, then Catalyst builds the stage4 against it.
 #
-# This is a from-source rebuild of the toolchain - expect a long, disk-heavy
-# run. snapshot handling / the portdir_overlay spec key may need tuning to the
-# Catalyst version shipped in the stage3.
+# Targets Catalyst 4: the Gentoo repo is provisioned as a git checkout at
+# /var/db/repos/gentoo and the snapshot is generated with `catalyst -s master`
+# (spec: snapshot_treeish: master, repos: /tmp/gnu-overlay).
+#
+# This is a from-source rebuild of the toolchain - expect a long, disk-heavy run.
 name: build-skeleton
 
 on:
@@ -36,8 +38,33 @@ jobs:
           set -euo pipefail
           emerge-webrsync
           emerge --quiet --oneshot dev-vcs/git net-misc/curl dev-util/catalyst
+          git config --global --add safe.directory '*'
           # Use all runner cores for the toolchain rebuild.
           sed -i "s|^#\?jobs\s*=.*|jobs = $(nproc)|" /etc/catalyst/catalyst.conf || true
+          echo "--- catalyst version / config ---"
+          catalyst --version || true
+          grep -E '^(repo_basedir|repo_name|storedir|jobs)\s*=' /etc/catalyst/catalyst.conf || true
+
+      # Catalyst 4 generates the portage snapshot from a git checkout of the
+      # Gentoo repo at repo_basedir/repo_name. emerge-webrsync above left a plain
+      # rsync tree there; replace it with a shallow git clone.
+      - name: Provision Gentoo repo as git for Catalyst 4 snapshot
+        run: |
+          set -euo pipefail
+          repo="$(sed -nE 's|^repo_basedir\s*=\s*"?([^"]+)"?.*|\1|p' /etc/catalyst/catalyst.conf | tail -n1)"
+          name="$(sed -nE 's|^repo_name\s*=\s*"?([^"]+)"?.*|\1|p' /etc/catalyst/catalyst.conf | tail -n1)"
+          repo="${repo:-/var/db/repos}"; name="${name:-gentoo}"
+          dest="${repo}/${name}"
+          echo "Provisioning git repo at ${dest}"
+          rm -rf "${dest}"
+          mkdir -p "${repo}"
+          git clone --depth=1 --single-branch --branch master \
+            https://github.com/gentoo/gentoo.git "${dest}" \
+            || git clone --depth=1 --single-branch --branch master \
+                 https://anongit.gentoo.org/git/repo/gentoo.git "${dest}"
+          git -C "${dest}" log --oneline -1
+          # Let prepare-overlay.sh reuse this repo instead of cloning again.
+          echo "GENTOO_SRC=${dest}" >> "${GITHUB_ENV}"
 
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -77,8 +104,11 @@ jobs:
           ln -sf "${fn}" "${CATALYST_BUILDS}/stage3-amd64-systemd-latest.tar.xz"
           ls -lh "${CATALYST_BUILDS}"
 
-      - name: Materialise the portage snapshot
-        run: catalyst -s stable
+      - name: Materialise the portage snapshot (Catalyst 4, git-based)
+        run: |
+          set -euo pipefail
+          catalyst -s master
+          ls -lh /var/tmp/catalyst/snapshots/ || true
 
       - name: Run Catalyst stage4 build
         run: catalyst -f catalyst/base-skeleton.spec

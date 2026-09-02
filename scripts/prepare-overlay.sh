@@ -21,6 +21,9 @@ set -euo pipefail
 OVERLAY="${OVERLAY:-/tmp/gnu-overlay}"
 GENTOO_GIT="${GENTOO_GIT:-https://github.com/gentoo/gentoo.git}"
 GENTOO_GIT_FALLBACK="https://anongit.gentoo.org/git/repo/gentoo.git"
+# If the workflow already provisioned a Gentoo repo (Catalyst 4 needs one at
+# /var/db/repos/gentoo for the snapshot), reuse it instead of cloning again.
+GENTOO_SRC="${GENTOO_SRC:-}"
 
 PKGS=(sys-devel/binutils sys-devel/gcc sys-libs/glibc)
 ECLASSES=(toolchain.eclass toolchain-binutils.eclass)
@@ -50,10 +53,16 @@ echo "gnu-overlay" > "${OVERLAY}/profiles/repo_name"
 # ---------------------------------------------------------------------------
 # 2. Shallow clone of the Gentoo ebuild repository
 # ---------------------------------------------------------------------------
-echo "==> Shallow-cloning the Gentoo ebuild repository"
-git clone --depth=1 --single-branch --filter=blob:limit=1m \
-  "${GENTOO_GIT}" "${WORK}/gentoo" \
-  || git clone --depth=1 --single-branch "${GENTOO_GIT_FALLBACK}" "${WORK}/gentoo"
+if [[ -n "${GENTOO_SRC}" && -d "${GENTOO_SRC}/sys-devel" ]]; then
+  echo "==> Reusing existing Gentoo repo at ${GENTOO_SRC}"
+  SRC="${GENTOO_SRC}"
+else
+  echo "==> Shallow-cloning the Gentoo ebuild repository"
+  git clone --depth=1 --single-branch --filter=blob:limit=1m \
+    "${GENTOO_GIT}" "${WORK}/gentoo" \
+    || git clone --depth=1 --single-branch "${GENTOO_GIT_FALLBACK}" "${WORK}/gentoo"
+  SRC="${WORK}/gentoo"
+fi
 
 # ---------------------------------------------------------------------------
 # 3. Import the toolchain packages and their eclasses into the overlay
@@ -61,14 +70,14 @@ git clone --depth=1 --single-branch --filter=blob:limit=1m \
 echo "==> Importing toolchain packages"
 for pkg in "${PKGS[@]}"; do
   mkdir -p "${OVERLAY}/${pkg%/*}"
-  cp -a "${WORK}/gentoo/${pkg}" "${OVERLAY}/${pkg}"
+  cp -a "${SRC}/${pkg}" "${OVERLAY}/${pkg}"
   echo "    + ${pkg}"
 done
 
 echo "==> Importing toolchain eclasses"
 for ec in "${ECLASSES[@]}"; do
-  if [[ -f "${WORK}/gentoo/eclass/${ec}" ]]; then
-    cp -a "${WORK}/gentoo/eclass/${ec}" "${OVERLAY}/eclass/${ec}"
+  if [[ -f "${SRC}/eclass/${ec}" ]]; then
+    cp -a "${SRC}/eclass/${ec}" "${OVERLAY}/eclass/${ec}"
     echo "    + eclass/${ec}"
   fi
 done
@@ -149,7 +158,7 @@ if command -v ebuild >/dev/null 2>&1; then
 main-repo = gentoo
 
 [gentoo]
-location = ${WORK}/gentoo
+location = ${SRC}
 
 [gnu-overlay]
 location = ${OVERLAY}
