@@ -32,11 +32,13 @@ stage4/use: vanilla -branding
 # Only the core toolchain is rebuilt from the overlay.
 stage4/packages: sys-devel/binutils sys-devel/gcc sys-libs/glibc
 
-# Remove the Gentoo package manager and its helpers.
-stage4/unmerge: sys-apps/portage app-admin/eselect app-portage/portage-utils
+# NOTE: no stage4/unmerge. Portage is not reliably usable in the de-branded
+# chroot (python default-version bump during the toolchain rebuild strands
+# sys-apps/portage), so `emerge -C` fails. strip-identity.sh removes
+# portage / eselect / portage-utils by file instead.
 
 # Wipe package DB, repos, caches and volatile trees.
 stage4/empty: /var/db/pkg /var/db/repos /var/cache/binpkgs /var/cache/distfiles /tmp /var/log /usr/src
 
-# In-chroot identity strip, run after compilation + unmerge.
+# In-chroot identity strip, run after compilation.
 stage4/fsscript: /root/catalyst/strip-identity.sh
