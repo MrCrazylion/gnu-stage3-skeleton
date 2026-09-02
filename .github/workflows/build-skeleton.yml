@@ -1,0 +1,105 @@
+# Build the pure vanilla, identity-less GNU/Linux systemd skeleton.
+#
+# Everything runs inside a native Gentoo environment (gentoo/stage3:latest,
+# --privileged so Catalyst can chroot/mount). scripts/prepare-overlay.sh builds
+# a local toolchain overlay that reverts gcc/binutils/glibc to upstream GNU
+# identity, then Catalyst builds the stage4 against it.
+#
+# This is a from-source rebuild of the toolchain - expect a long, disk-heavy
+# run. snapshot handling / the portdir_overlay spec key may need tuning to the
+# Catalyst version shipped in the stage3.
+name: build-skeleton
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    container:
+      image: gentoo/stage3:latest
+      options: --privileged
+
+    env:
+      GENTOO_AUTOBUILDS_URL: https://distfiles.gentoo.org/releases/amd64/autobuilds
+      LATEST_POINTER: latest-stage3-amd64-systemd.txt
+      CATALYST_BUILDS: /var/tmp/catalyst/builds/default
+
+    steps:
+      # gentoo/stage3 has no git/curl/catalyst - pull a fresh ebuild snapshot
+      # and emerge them before anything else.
+      - name: Install git, curl and Catalyst
+        run: |
+          set -euo pipefail
+          emerge-webrsync
+          emerge --quiet --oneshot dev-vcs/git net-misc/curl dev-util/catalyst
+          # Use all runner cores for the toolchain rebuild.
+          sed -i "s|^#\?jobs\s*=.*|jobs = $(nproc)|" /etc/catalyst/catalyst.conf || true
+
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Build the vanilla toolchain overlay
+        run: |
+          set -euo pipefail
+          chmod +x scripts/prepare-overlay.sh
+          scripts/prepare-overlay.sh
+
+      # The spec references /root/catalyst/strip-identity.sh.
+      - name: Stage the in-chroot fsscript
+        run: |
+          set -euo pipefail
+          mkdir -p /root/catalyst
+          cp catalyst/strip-identity.sh /root/catalyst/strip-identity.sh
+          chmod +x /root/catalyst/strip-identity.sh
+
+      - name: Seed the latest stage3-amd64-systemd tarball
+        run: |
+          set -euo pipefail
+          mkdir -p "${CATALYST_BUILDS}"
+
+          rel_path="$(curl -fsSL "${GENTOO_AUTOBUILDS_URL}/${LATEST_POINTER}" \
+            | grep -v '^#' \
+            | grep -E 'stage3-amd64-systemd-[0-9TZ]+\.tar\.xz' \
+            | head -n1 | cut -d' ' -f1)"
+          test -n "${rel_path}" || { echo "::error::cannot resolve latest stage3"; exit 1; }
+          fn="$(basename "${rel_path}")"
+          echo "Seed: ${fn}"
+
+          curl -fsSL -o "${CATALYST_BUILDS}/${fn}"        "${GENTOO_AUTOBUILDS_URL}/${rel_path}"
+          curl -fsSL -o "${CATALYST_BUILDS}/${fn}.sha256" "${GENTOO_AUTOBUILDS_URL}/${rel_path}.sha256"
+          ( cd "${CATALYST_BUILDS}" && grep -E "  ${fn}\$" "${fn}.sha256" | sha256sum -c - )
+
+          # source_subpath: default/stage3-amd64-systemd-latest
+          ln -sf "${fn}" "${CATALYST_BUILDS}/stage3-amd64-systemd-latest.tar.xz"
+          ls -lh "${CATALYST_BUILDS}"
+
+      - name: Materialise the portage snapshot
+        run: catalyst -s stable
+
+      - name: Run Catalyst stage4 build
+        run: catalyst -f catalyst/base-skeleton.spec
+
+      - name: Collect the output tarball
+        run: |
+          set -euo pipefail
+          src="$(find /var/tmp/catalyst/builds -name 'stage4-*.tar.xz' -type f | head -n1)"
+          test -n "${src}" || { echo "::error::no stage4 tarball produced"; exit 1; }
+          echo "Built: ${src}"
+          cp "${src}" "${GITHUB_WORKSPACE}/gnu-stage3-skeleton-amd64.tar.xz"
+          ( cd "${GITHUB_WORKSPACE}" \
+            && sha256sum gnu-stage3-skeleton-amd64.tar.xz | tee gnu-stage3-skeleton-amd64.tar.xz.sha256 )
+          ls -lh "${GITHUB_WORKSPACE}/gnu-stage3-skeleton-amd64.tar.xz"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: gnu-stage3-skeleton-amd64
+          path: |
+            gnu-stage3-skeleton-amd64.tar.xz
+            gnu-stage3-skeleton-amd64.tar.xz.sha256
+          if-no-files-found: error
+          retention-days: 14
