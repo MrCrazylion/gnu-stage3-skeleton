@@ -50,26 +50,23 @@ jobs:
           catalyst --version || true
           grep -E '^(repo_basedir|repo_name|storedir|jobs)\s*=' /etc/catalyst/catalyst.conf || true
 
-      # Catalyst 4 generates the portage snapshot from a git checkout of the
-      # Gentoo repo at repo_basedir/repo_name. emerge-webrsync above left a plain
-      # rsync tree there; replace it with a shallow git clone.
-      - name: Provision Gentoo repo as git for Catalyst 4 snapshot
+      # Catalyst 4 builds the snapshot by running `git archive` against a BARE
+      # repo at ${storedir}/repos/<repo_name>.git (default
+      # /var/tmp/catalyst/repos/gentoo.git). If that path is missing it still
+      # writes an empty .sqfs and exits 0, so we must provision it here.
+      - name: Provision bare Gentoo repo for Catalyst 4 snapshot
         run: |
           set -euo pipefail
-          repo="$(sed -nE 's|^repo_basedir\s*=\s*"?([^"]+)"?.*|\1|p' /etc/catalyst/catalyst.conf | tail -n1)"
-          name="$(sed -nE 's|^repo_name\s*=\s*"?([^"]+)"?.*|\1|p' /etc/catalyst/catalyst.conf | tail -n1)"
-          repo="${repo:-/var/db/repos}"; name="${name:-gentoo}"
-          dest="${repo}/${name}"
-          echo "Provisioning git repo at ${dest}"
+          dest=/var/tmp/catalyst/repos/gentoo.git
+          mkdir -p "$(dirname "${dest}")"
           rm -rf "${dest}"
-          mkdir -p "${repo}"
-          git clone --depth=1 --single-branch --branch master \
+          git clone --bare --depth=1 --single-branch --branch master \
             https://github.com/gentoo/gentoo.git "${dest}" \
-            || git clone --depth=1 --single-branch --branch master \
+            || git clone --bare --depth=1 --single-branch --branch master \
                  https://anongit.gentoo.org/git/repo/gentoo.git "${dest}"
           git -C "${dest}" log --oneline -1
-          # Let prepare-overlay.sh reuse this repo instead of cloning again.
-          echo "GENTOO_SRC=${dest}" >> "${GITHUB_ENV}"
+          # prepare-overlay.sh reuses the rsync tree emerge-webrsync populated.
+          echo "GENTOO_SRC=/var/db/repos/gentoo" >> "${GITHUB_ENV}"
 
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -113,7 +110,13 @@ jobs:
         run: |
           set -euo pipefail
           catalyst -s master
-          ls -lh /var/tmp/catalyst/snapshots/ || true
+          ls -lh /var/tmp/catalyst/snapshots/
+          # catalyst -s exits 0 even when `git archive` fails and writes an
+          # empty squashfs - guard against that here.
+          sz="$(stat -c%s /var/tmp/catalyst/snapshots/gentoo-master.sqfs)"
+          echo "snapshot size: ${sz} bytes"
+          test "${sz}" -gt 10000000 \
+            || { echo "::error::snapshot is empty (${sz} B) - git archive failed"; exit 1; }
 
       - name: Run Catalyst stage4 build
         run: catalyst -f catalyst/base-skeleton.spec
