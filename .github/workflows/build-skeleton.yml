@@ -37,7 +37,12 @@ jobs:
         run: |
           set -euo pipefail
           emerge-webrsync
-          emerge --quiet --oneshot dev-vcs/git net-misc/curl dev-util/catalyst
+          emerge --quiet --oneshot dev-vcs/git net-misc/curl
+          # dev-util/catalyst is ~amd64 (testing) only; unmask it and pull any
+          # testing deps it needs.
+          mkdir -p /etc/portage/package.accept_keywords
+          printf '%s\n' 'dev-util/catalyst ~amd64' > /etc/portage/package.accept_keywords/catalyst
+          emerge --quiet --oneshot --autounmask-continue=y dev-util/catalyst
           git config --global --add safe.directory '*'
           # Use all runner cores for the toolchain rebuild.
           sed -i "s|^#\?jobs\s*=.*|jobs = $(nproc)|" /etc/catalyst/catalyst.conf || true
