@@ -178,7 +178,7 @@ jobs:
           # These must no longer exist at all.
           for p in \
             etc/os-release usr/lib/os-release etc/gentoo-release \
-            etc/portage var/db/pkg usr/bin/emerge usr/bin/eselect \
+            etc/portage usr/bin/emerge usr/bin/eselect \
             usr/bin/qlist etc/env.d ; do
             if sudo test -e "${ROOTFS_DIR}/${p}"; then
               echo "::error::Expected ${p} to be removed, but it still exists"
@@ -186,8 +186,9 @@ jobs:
             fi
           done
 
-          # These dirs may remain, but must be empty.
-          for d in var/db/repos var/cache ; do
+          # These dirs may remain (only their contents were removed), but must
+          # be empty.
+          for d in var/db/repos var/db/pkg var/cache ; do
             if sudo test -d "${ROOTFS_DIR}/${d}" \
                && [ -n "$(sudo ls -A "${ROOTFS_DIR}/${d}")" ]; then
               echo "::error::Expected ${ROOTFS_DIR}/${d} to be empty"
