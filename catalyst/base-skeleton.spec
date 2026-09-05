@@ -1,11 +1,6 @@
-# Catalyst stage4 spec: 100% vanilla, identity-less GNU/Linux systemd skeleton.
-#
-# The core toolchain (binutils, gcc, glibc) is rebuilt against the local
-# /tmp/gnu-overlay produced by scripts/prepare-overlay.sh, which strips Gentoo
-# branding patches and the --with-pkgversion / --with-bugurl /
-# --enable-gentoo-library-naming configure switches so the binaries carry pure
-# upstream GNU identity strings. Portage/eselect are then unmerged, caches and
-# the package DB are emptied, and strip-identity.sh removes the last traces.
+# Catalyst builds the intermediate amd64/glibc/systemd rootfs.
+# Keep the build tools and package database until Catalyst has finished.
+# The workflow finalizes and validates an extracted copy afterwards.
 
 subarch: amd64
 target: stage4
@@ -26,19 +21,12 @@ source_subpath: default/stage3-amd64-systemd-latest
 # The overlay uses thin manifests so no manifest signing is needed.
 repos: /tmp/gnu-overlay
 
-# Force vanilla, unbranded builds for everything compiled in this stage.
+# Request these USE flags where supported; this is not an upstream-purity check.
 stage4/use: vanilla -branding
 
-# Only the core toolchain is rebuilt from the overlay.
-stage4/packages: sys-devel/binutils sys-devel/gcc sys-libs/glibc
+# The workflow disables pkgcache to avoid --newuse skipping these rebuilds.
+stage4/packages: sys-devel/binutils::gnu-overlay sys-devel/gcc::gnu-overlay sys-libs/glibc::gnu-overlay
 
-# NOTE: no stage4/unmerge. Portage is not reliably usable in the de-branded
-# chroot (python default-version bump during the toolchain rebuild strands
-# sys-apps/portage), so `emerge -C` fails. strip-identity.sh removes
-# portage / eselect / portage-utils by file instead.
-
-# Wipe package DB, repos, caches and volatile trees.
-stage4/empty: /var/db/pkg /var/db/repos /var/cache/binpkgs /var/cache/distfiles /tmp /var/log /usr/src
-
-# In-chroot identity strip, run after compilation.
-stage4/fsscript: /root/catalyst/strip-identity.sh
+# No identity-removal fsscript: preclean/clean still require Portage afterwards.
+# Preserve /var/db/pkg so the finalizer can remove files by package ownership.
+stage4/empty: /var/cache/binpkgs /var/cache/distfiles /tmp /var/log /usr/src

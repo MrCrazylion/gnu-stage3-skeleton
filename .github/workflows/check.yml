@@ -1,0 +1,16 @@
+name: check-scripts
+on: [push, pull_request, workflow_dispatch]
+permissions:
+  contents: read
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Test offline finalizer
+        run: python3 -m unittest discover -s tests -v
+      - name: Check shell syntax
+        run: |
+          for script in scripts/*.sh catalyst/*.sh; do
+            bash -n "$script"
+          done

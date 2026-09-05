@@ -1,0 +1,6 @@
+__pycache__/
+*.py[cod]
+*.tar.xz
+*.tar.xz.sha256
+*.tar.xz.manifest.json
+catalyst-build.log

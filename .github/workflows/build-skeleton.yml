@@ -1,15 +1,6 @@
-# Build the pure vanilla, identity-less GNU/Linux systemd skeleton.
-#
-# Everything runs inside a native Gentoo environment (gentoo/stage3:latest,
-# --privileged so Catalyst can chroot/mount). scripts/prepare-overlay.sh builds
-# a local toolchain overlay that reverts gcc/binutils/glibc to upstream GNU
-# identity, then Catalyst builds the stage4 against it.
-#
-# Targets Catalyst 4: the Gentoo repo is provisioned as a git checkout at
-# /var/db/repos/gentoo and the snapshot is generated with `catalyst -s master`
-# (spec: snapshot_treeish: master, repos: /tmp/gnu-overlay).
-#
-# This is a from-source rebuild of the toolchain - expect a long, disk-heavy run.
+# Build an amd64/glibc/systemd rootfs, then finalize an extracted copy.
+# Catalyst must retain its build tools until its entire action sequence ends.
+# Runtime checks gate publication; upstream purity and VM boot are not implied.
 name: build-skeleton
 
 on:
@@ -21,6 +12,10 @@ permissions:
 jobs:
   build:
     runs-on: ubuntu-latest
+    timeout-minutes: 360
+    defaults:
+      run:
+        shell: bash
     container:
       image: gentoo/stage3:latest
       options: --privileged
@@ -44,6 +39,20 @@ jobs:
           printf '%s\n' 'dev-util/catalyst ~amd64' > /etc/portage/package.accept_keywords/catalyst
           emerge --quiet --oneshot --autounmask-continue=y dev-util/catalyst
           git config --global --add safe.directory '*'
+          # pkgcache adds --newuse and can skip an unchanged overlay package.
+          # Disable it so the explicit stage4 toolchain requests compile from source.
+          python3 - <<'PYCONFIG'
+          import json, re, tomllib
+          from pathlib import Path
+          p = Path('/etc/catalyst/catalyst.conf')
+          text = p.read_text()
+          config = tomllib.loads(text)
+          options = [x for x in config['options'] if x != 'pkgcache']
+          text, count = re.subn(r'(?ms)^options\s*=\s*\[.*?\]',
+                               'options = ' + json.dumps(options), text, count=1)
+          assert count == 1 and 'pkgcache' not in tomllib.loads(text)['options']
+          p.write_text(text)
+          PYCONFIG
           # Use all runner cores for the toolchain rebuild.
           sed -i "s|^#\?jobs\s*=.*|jobs = $(nproc)|" /etc/catalyst/catalyst.conf || true
           echo "--- catalyst version / config ---"
@@ -65,8 +74,9 @@ jobs:
             || git clone --bare --depth=1 --single-branch --branch master \
                  https://anongit.gentoo.org/git/repo/gentoo.git "${dest}"
           git -C "${dest}" log --oneline -1
-          # prepare-overlay.sh reuses the rsync tree emerge-webrsync populated.
-          echo "GENTOO_SRC=/var/db/repos/gentoo" >> "${GITHUB_ENV}"
+          # The overlay and Catalyst snapshot must use the same repository revision.
+          git clone --shared "${dest}" /tmp/gentoo-source
+          echo "GENTOO_SRC=/tmp/gentoo-source" >> "${GITHUB_ENV}"
 
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -76,14 +86,6 @@ jobs:
           set -euo pipefail
           chmod +x scripts/prepare-overlay.sh
           scripts/prepare-overlay.sh
-
-      # The spec references /root/catalyst/strip-identity.sh.
-      - name: Stage the in-chroot fsscript
-        run: |
-          set -euo pipefail
-          mkdir -p /root/catalyst
-          cp catalyst/strip-identity.sh /root/catalyst/strip-identity.sh
-          chmod +x /root/catalyst/strip-identity.sh
 
       - name: Seed the latest stage3-amd64-systemd tarball
         run: |
@@ -119,15 +121,18 @@ jobs:
             || { echo "::error::snapshot is empty (${sz} B) - git archive failed"; exit 1; }
 
       - name: Run Catalyst stage4 build
-        run: catalyst -f catalyst/base-skeleton.spec
-
-      - name: Collect the output tarball
         run: |
           set -euo pipefail
-          src="$(find /var/tmp/catalyst/builds -name 'stage4-*.tar.xz' -type f | head -n1)"
-          test -n "${src}" || { echo "::error::no stage4 tarball produced"; exit 1; }
+          catalyst -f catalyst/base-skeleton.spec 2>&1 | tee catalyst-build.log
+
+      - name: Finalize and validate the output tarball
+        run: |
+          set -euo pipefail
+          mapfile -t candidates < <(find /var/tmp/catalyst/builds -name 'stage4-*.tar.xz' -type f)
+          test "${#candidates[@]}" -eq 1 || { echo "::error::expected exactly one stage4 tarball"; exit 1; }
+          src="${candidates[0]}"
           echo "Built: ${src}"
-          cp "${src}" "${GITHUB_WORKSPACE}/gnu-stage3-skeleton-amd64.tar.xz"
+          bash scripts/finalize-artifact.sh "${src}" "${GITHUB_WORKSPACE}/gnu-stage3-skeleton-amd64.tar.xz"
           ( cd "${GITHUB_WORKSPACE}" \
             && sha256sum gnu-stage3-skeleton-amd64.tar.xz | tee gnu-stage3-skeleton-amd64.tar.xz.sha256 )
           ls -lh "${GITHUB_WORKSPACE}/gnu-stage3-skeleton-amd64.tar.xz"
@@ -139,5 +144,17 @@ jobs:
           path: |
             gnu-stage3-skeleton-amd64.tar.xz
             gnu-stage3-skeleton-amd64.tar.xz.sha256
+            gnu-stage3-skeleton-amd64.tar.xz.manifest.json
           if-no-files-found: error
+          retention-days: 14
+
+      - name: Upload diagnostic logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: skeleton-diagnostics
+          path: |
+            catalyst-build.log
+            gnu-stage3-skeleton-amd64.tar.xz.manifest.json
+          if-no-files-found: ignore
           retention-days: 14
