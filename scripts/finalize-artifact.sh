@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Run on the Linux builder only after Catalyst has returned successfully.
 set -euo pipefail
-[[ $# == 2 ]] || { echo 'Usage: finalize-artifact.sh INPUT.tar.xz OUTPUT.tar.xz' >&2; exit 2; }
+[[ $# == 2 ]] || { echo 'Usage: finalize-artifact.sh INPUT.tar[.xz|.bz2|.gz] OUTPUT.tar.xz' >&2; exit 2; }
 input=$(realpath -- "$1")
 output=$(realpath -m -- "$2")
 [[ -f $input && $input != "$output" && ! -e $output ]] || {

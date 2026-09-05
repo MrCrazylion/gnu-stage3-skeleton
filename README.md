@@ -14,7 +14,9 @@ Run `build-skeleton` with GitHub Actions `workflow_dispatch`.
 2. Catalyst builds its intermediate stage4. Its package cache is disabled so
    explicit requests for the three overlay toolchain packages aren't skipped by
    `--newuse`. Gentoo's remaining build configuration still applies.
-3. After Catalyst has finished, extract its archive into a temporary rootfs.
+3. Preserve the intermediate Catalyst archive as a separate 3-day artifact,
+   then extract it into a temporary rootfs. Inputs may use xz, bzip2, gzip or
+   uncompressed tar; the final output is always xz.
 4. Remove Portage, eselect and portage-utils files using the installed package
    CONTENTS lists plus explicit cleanup paths. Remove account entries, generated
    environment files, login branding and OS identity files. Preserve the selected

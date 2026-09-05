@@ -125,12 +125,25 @@ jobs:
           set -euo pipefail
           catalyst -f catalyst/base-skeleton.spec 2>&1 | tee catalyst-build.log
 
+      # Preserve the expensive build before running cleanup or validation.
+      # This archive still contains the seed/build identity; it is not the final output.
+      - name: Preserve intermediate Catalyst archive
+        uses: actions/upload-artifact@v4
+        with:
+          name: catalyst-stage4-intermediate
+          path: |
+            /var/tmp/catalyst/builds/**/stage4-*.tar.bz2
+            /var/tmp/catalyst/builds/**/stage4-*.tar.xz
+            /var/tmp/catalyst/builds/**/stage4-*.tar.gz
+            /var/tmp/catalyst/builds/**/stage4-*.tar
+          compression-level: 0
+          if-no-files-found: error
+          retention-days: 3
+
       - name: Finalize and validate the output tarball
         run: |
           set -euo pipefail
-          mapfile -t candidates < <(find /var/tmp/catalyst/builds -name 'stage4-*.tar.xz' -type f)
-          test "${#candidates[@]}" -eq 1 || { echo "::error::expected exactly one stage4 tarball"; exit 1; }
-          src="${candidates[0]}"
+          src="$(python3 scripts/find-stage4.py /var/tmp/catalyst/builds)"
           echo "Built: ${src}"
           bash scripts/finalize-artifact.sh "${src}" "${GITHUB_WORKSPACE}/gnu-stage3-skeleton-amd64.tar.xz"
           ( cd "${GITHUB_WORKSPACE}" \
